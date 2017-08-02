@@ -1,6 +1,6 @@
 ### LassoGLMM for Microbiome Studies ###
 ### Written by Laura Tipton          ###
-### Last edited: Jan 11, 2016        ###
+### Last edited: August 2, 2017      ###
 
 ## Data should be in the following formats:
 # MBdat: 16S/ITS relative abundance data in 1 matrix, samples in rows and OTUs/species in columns with identifiable names
@@ -28,16 +28,17 @@ gt0 <- function(vec){
 MBdat.gt0 <- as.matrix(apply(MBdat, 2, gt0))
 MBdat2 <- MBdat[,-which(dat.gt0<2)]
 
-## Variable screening step based on Pearson Correlations
-# corrpairs = function to calculate Pearson correlations between all OTU-response variable pairs
-corrpairs <- function(ys, xs, fName="Correlations.csv", useQ=FALSE){
+## Variable screening step based on Correlations
+# UPDATE 5/16: added option to specify correation test and changed default to Spearman
+# corrpairs = function to calculate correlations between all OTU-response variable pairs
+corrpairs <- function(ys, xs, fName="Correlations.csv", useQ=FALSE, met="spearman"){
   sums <- apply(xs, 2, gt0)
   res <- vector("list", length(ncol(ys)))
   #names(res) <- colnames(ys)
   for(i in 1:ncol(ys)){
     res[[i]] <- vector("list")
     for(j in 1:ncol(xs)){
-      c <- cor.test(ys[,i], xs[,j], na.rm=TRUE)
+      c <- cor.test(ys[,i], xs[,j], na.rm=TRUE, method=met)
       p <- c$p.value
       q <- c$p.value*(ncol(ys)*ncol(xs))
       if (!is.na(p)){
@@ -92,6 +93,7 @@ penGLMM <- function(ys, xs, corrs, randE, fName='Regression.txt', lam=seq(0,200,
     minmod <- list()
     minmod$coefficients <- 0
     minmod$ranef <- 0
+    tmp[,1] <- as.numeric(as.character(tmp[,1]))
     for (l in lam){
       try({
         mod <- glmmLasso(fix=as.formula(paste("tmp[,1]~", substr(vars3,2,nchar(vars3)))), rnd=ranEf, data=data.frame(tmp), lambda=l, control=list(q_start=diag(0.1, ncol(randE))))
@@ -126,11 +128,36 @@ par(family="sans")
 tmpplot <- cbind(MBdat2[order(dat[,1]),], dat[order(dat[,1]),1])
 
 # plot a "none" plot to set axes and labels
-matplot(log(tmpplot[-which(tmpplot[,1]==0),1]), tmpplot[-which(tmpplot[,1]==0),ncol(tmpplot)], pch=19, type="n", ylab="Response Variable", xlab="log relative abundance", main="OTU-1")
+matplot(tmpplot[,1], tmpplot[,ncol(tmpplot)], pch=19, type="n", ylab="Response Variable", xlab="log relative abundance", main="OTU-1")
 
 # plot grey dashed lines for all responses
 for(i in 1:nrow(tmpplot)){ lines(c(-20,20), c(tmpplot[i,ncol(tmpplot)], tmpplot[i,ncol(tmpplot)]), lty=2, col="grey")}
 
 # finally plot abundances in red
-matplot(log(tmpplot[-which(tmpplot[,1]==0),1]), tmpplot[-which(tmpplot[,1]==0),ncol(tmpplot)], pch=19, type="o", add=TRUE, col="red")
+matplot(tmpplot[,1], tmpplot[,ncol(tmpplot)], pch=19, type="o", add=TRUE, col="red")
 
+## Examine R^2 for overfitting
+# Added 8/17
+require(piecewiseSEM)
+require(lme4)
+
+# create temporary dataset with all relevant variables, including random effects; exclude observations with missing response variables
+tmpmod <- data.frame(na.omit(cbind(MBdat2[,1], dat, ids, demos)))
+
+# run linear mixed model with only stongly associated OTUs (again assuming OTU-1 is strongly associated with response variable 1)
+# I found it easier to use variable names in this step so have used DEMO1 and ID1 for variables in demos and ids respectively
+mod1 <- lmer(tmpmod[,1]~OTU_1+as.factor(DEMO1)+(1|ID1), data=tmpmod)
+
+# calculate marginal and conditional R^2, columns 5 and 6, respectively
+rsq <- sem.model.fits(mod1)
+
+## Residual Plots; must be run after examining R^2 so that you have mod1 in the environment
+# Added 8/17
+
+plot(tmpmod[,1], predict(mod1), main="Variable 1", xlab="Observed", ylab="Predicted")
+
+# add red line where prediction equals observation
+abline(0,1, col="red", lty=2)
+
+# add correlation value; x and y coordinates will need to be updated to an empty spot on the plot
+text(x=0, y=0, paste("corr=", round(cor(tmpmod[,1], predict(mod1)), 3)))
